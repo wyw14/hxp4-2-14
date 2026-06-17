@@ -1,8 +1,9 @@
 import { Router } from 'express';
-import { CreateGameRequest, ExtendMyceliumRequest, ApiResponse, HexCoord } from './types';
-import { createNewGame, extendMycelium, undoLastMove, findAutoPath } from './gameLogic';
+import { CreateGameRequest, ExtendMyceliumRequest, ApiResponse, HexCoord, Puzzle, GameState } from './types';
+import { createNewGame, extendMycelium, undoLastMove, findAutoPath, createPuzzleGame } from './gameLogic';
 import { saveGame, loadGame, deleteGame, listGames } from './db';
 import { coordKey } from './hexUtils';
+import { getAllPuzzles, getPuzzleById } from './puzzles';
 
 const router = Router();
 
@@ -29,16 +30,17 @@ router.post('/games', (req, res) => {
 router.get('/games', (req, res) => {
   try {
     const games = listGames();
-    const response: ApiResponse<typeof games> = {
+    const gameList = games.map((g) => ({
+      id: g.id,
+      level: g.level,
+      status: g.status,
+      steps: g.steps,
+      optimalSteps: g.optimalSteps,
+      updatedAt: g.updatedAt,
+    }));
+    const response: ApiResponse<typeof gameList> = {
       success: true,
-      data: games.map((g) => ({
-        id: g.id,
-        level: g.level,
-        status: g.status,
-        steps: g.steps,
-        optimalSteps: g.optimalSteps,
-        updatedAt: g.updatedAt,
-      })),
+      data: gameList,
     };
     res.json(response);
   } catch (error) {
@@ -85,7 +87,7 @@ router.post('/games/:id/extend', (req, res) => {
     const result = extendMycelium(game, coord);
     saveGame(result.game);
 
-    const response: ApiResponse = {
+    const response: ApiResponse<GameState> = {
       success: result.success,
       data: result.game,
       error: result.success ? undefined : result.message,
@@ -111,7 +113,7 @@ router.post('/games/:id/undo', (req, res) => {
     const result = undoLastMove(game);
     saveGame(result.game);
 
-    const response: ApiResponse = {
+    const response: ApiResponse<GameState> = {
       success: result.success,
       data: result.game,
       error: result.success ? undefined : result.message,
@@ -134,10 +136,15 @@ router.post('/games/:id/reset', (req, res) => {
       return res.status(404).json(response);
     }
 
-    const newGame = createNewGame(game.level, game.gridRadius);
+    let newGame;
+    if (game.puzzleId) {
+      newGame = createPuzzleGame(game.puzzleId);
+    } else {
+      newGame = createNewGame(game.level, game.gridRadius);
+    }
     saveGame({ ...newGame, id: game.id, createdAt: game.createdAt });
 
-    const response: ApiResponse = { success: true, data: { ...newGame, id: game.id } };
+    const response: ApiResponse<GameState> = { success: true, data: { ...newGame, id: game.id } };
     res.json(response);
   } catch (error) {
     const response: ApiResponse = {
@@ -180,7 +187,7 @@ router.post('/games/:id/find-path', (req, res) => {
     }
 
     const path = findAutoPath(game, from, to);
-    const response: ApiResponse = {
+    const response: ApiResponse<HexCoord[]> = {
       success: path !== null,
       data: path || undefined,
       error: path === null ? '找不到可行路径' : undefined,
@@ -190,6 +197,56 @@ router.post('/games/:id/find-path', (req, res) => {
     const response: ApiResponse = {
       success: false,
       error: error instanceof Error ? error.message : '寻路失败',
+    };
+    res.status(500).json(response);
+  }
+});
+
+router.get('/puzzles', (req, res) => {
+  try {
+    const puzzles = getAllPuzzles();
+    const puzzleList = puzzles.map((p) => ({
+      id: p.id,
+      name: p.name,
+      difficulty: p.difficulty,
+      recommendedSteps: p.recommendedSteps,
+      gridRadius: p.gridRadius,
+    }));
+    const response: ApiResponse<typeof puzzleList> = {
+      success: true,
+      data: puzzleList,
+    };
+    res.json(response);
+  } catch (error) {
+    const response: ApiResponse = {
+      success: false,
+      error: error instanceof Error ? error.message : '获取谜题列表失败',
+    };
+    res.status(500).json(response);
+  }
+});
+
+router.post('/puzzles/:id/play', (req, res) => {
+  try {
+    const puzzleId = req.params.id;
+    const puzzle = getPuzzleById(puzzleId);
+    if (!puzzle) {
+      const response: ApiResponse = { success: false, error: '谜题不存在' };
+      return res.status(404).json(response);
+    }
+
+    const game = createPuzzleGame(puzzleId);
+    saveGame(game);
+
+    const response: ApiResponse<typeof game> = {
+      success: true,
+      data: game,
+    };
+    res.json(response);
+  } catch (error) {
+    const response: ApiResponse = {
+      success: false,
+      error: error instanceof Error ? error.message : '创建谜题游戏失败',
     };
     res.status(500).json(response);
   }

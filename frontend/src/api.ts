@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { GameState, HexCoord, ApiResponse } from './types';
+import { GameState, HexCoord, ApiResponse, Puzzle } from './types';
 
 const API_BASE = '/api';
 
@@ -56,4 +56,20 @@ export async function findPath(id: string, from: HexCoord, to: HexCoord): Promis
   } catch {
     return null;
   }
+}
+
+export async function getPuzzles(): Promise<Puzzle[]> {
+  const response = await api.get<ApiResponse<Puzzle[]>>('/puzzles');
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error || '获取谜题列表失败');
+  }
+  return response.data.data;
+}
+
+export async function createPuzzleGame(puzzleId: string): Promise<GameState> {
+  const response = await api.post<ApiResponse<GameState>>(`/puzzles/${puzzleId}/play`);
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error || '创建谜题游戏失败');
+  }
+  return response.data.data;
 }

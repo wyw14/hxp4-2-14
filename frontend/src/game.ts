@@ -1,7 +1,7 @@
 import './styles.css';
-import { GameState, HexCoord, HexType } from './types';
+import { GameState, HexCoord, HexType, Puzzle } from './types';
 import { HexGridRenderer } from './hexGrid';
-import { createGame, getGame, extendMycelium, undoMove, resetGame, findPath } from './api';
+import { createGame, getGame, extendMycelium, undoMove, resetGame, findPath, getPuzzles, createPuzzleGame } from './api';
 import { coordKey, findPathAStar, PixelCoord } from './hexUtils';
 
 type MessageType = 'info' | 'success' | 'error';
@@ -21,6 +21,9 @@ export class FungiGame {
   private messageTimeout: any = null;
   private isProcessing = false;
   private previewPathCoord: HexCoord | null = null;
+  private gameMode: 'level' | 'puzzle' = 'level';
+  private puzzles: Puzzle[] = [];
+  private selectedPuzzleId: string | null = null;
 
   constructor() {
     const hexContainer = document.getElementById('hex-container')!;
@@ -38,8 +41,13 @@ export class FungiGame {
     this.initUI();
   }
 
-  private initUI(): void {
+  private async initUI(): Promise<void> {
     this.renderPanel();
+    try {
+      this.puzzles = await getPuzzles();
+    } catch (e) {
+      console.error('加载谜题列表失败:', e);
+    }
     this.startNewGame(this.selectedLevel);
   }
 
@@ -85,22 +93,109 @@ export class FungiGame {
     const section = document.createElement('div');
     section.innerHTML = `<div class="section-title">选择关卡</div>`;
 
-    const levelSelector = document.createElement('div');
-    levelSelector.className = 'level-selector';
+    const tabContainer = document.createElement('div');
+    tabContainer.className = 'mode-tabs';
 
-    for (let i = 1; i <= 5; i++) {
-      const btn = document.createElement('button');
-      btn.className = `level-btn${i === this.selectedLevel ? ' active' : ''}`;
-      btn.textContent = String(i);
-      btn.onclick = () => {
-        this.selectedLevel = i;
-        this.startNewGame(i);
-      };
-      levelSelector.appendChild(btn);
+    const levelTab = document.createElement('button');
+    levelTab.className = `mode-tab${this.gameMode === 'level' ? ' active' : ''}`;
+    levelTab.textContent = '🎲 随机关卡';
+    levelTab.onclick = () => {
+      this.gameMode = 'level';
+      this.selectedPuzzleId = null;
+      this.renderPanel();
+      this.startNewGame(this.selectedLevel);
+    };
+
+    const puzzleTab = document.createElement('button');
+    puzzleTab.className = `mode-tab${this.gameMode === 'puzzle' ? ' active' : ''}`;
+    puzzleTab.textContent = '🧩 手工谜题';
+    puzzleTab.onclick = () => {
+      this.gameMode = 'puzzle';
+      this.renderPanel();
+      if (this.puzzles.length > 0 && !this.selectedPuzzleId) {
+        this.selectedPuzzleId = this.puzzles[0].id;
+        this.startPuzzleGame(this.puzzles[0].id);
+      } else if (this.selectedPuzzleId) {
+        this.startPuzzleGame(this.selectedPuzzleId);
+      }
+    };
+
+    tabContainer.appendChild(levelTab);
+    tabContainer.appendChild(puzzleTab);
+    section.appendChild(tabContainer);
+
+    if (this.gameMode === 'level') {
+      const levelSelector = document.createElement('div');
+      levelSelector.className = 'level-selector';
+
+      for (let i = 1; i <= 5; i++) {
+        const btn = document.createElement('button');
+        btn.className = `level-btn${i === this.selectedLevel ? ' active' : ''}`;
+        btn.textContent = String(i);
+        btn.onclick = () => {
+          this.selectedLevel = i;
+          this.startNewGame(i);
+        };
+        levelSelector.appendChild(btn);
+      }
+
+      section.appendChild(levelSelector);
+    } else {
+      const puzzleList = document.createElement('div');
+      puzzleList.className = 'puzzle-list';
+
+      if (this.puzzles.length === 0) {
+        const emptyText = document.createElement('div');
+        emptyText.style.cssText = 'color: #8a8a9a; font-size: 13px; padding: 12px 0;';
+        emptyText.textContent = '加载中...';
+        puzzleList.appendChild(emptyText);
+      } else {
+        for (const puzzle of this.puzzles) {
+          const puzzleItem = document.createElement('div');
+          puzzleItem.className = `puzzle-item${puzzle.id === this.selectedPuzzleId ? ' active' : ''}`;
+
+          const diffColor = this.getDifficultyColor(puzzle.difficulty);
+          const diffText = this.getDifficultyText(puzzle.difficulty);
+
+          puzzleItem.innerHTML = `
+            <div class="puzzle-name">${puzzle.name}</div>
+            <div class="puzzle-meta">
+              <span class="puzzle-difficulty" style="color: ${diffColor}">${diffText}</span>
+              <span class="puzzle-steps">推荐 ${puzzle.recommendedSteps} 步</span>
+            </div>
+          `;
+
+          puzzleItem.onclick = () => {
+            this.selectedPuzzleId = puzzle.id;
+            this.startPuzzleGame(puzzle.id);
+          };
+
+          puzzleList.appendChild(puzzleItem);
+        }
+      }
+
+      section.appendChild(puzzleList);
     }
 
-    section.appendChild(levelSelector);
     return section;
+  }
+
+  private getDifficultyColor(difficulty: string): string {
+    switch (difficulty) {
+      case 'easy': return '#7ed957';
+      case 'medium': return '#ffb84d';
+      case 'hard': return '#ff6b6b';
+      default: return '#8a8a9a';
+    }
+  }
+
+  private getDifficultyText(difficulty: string): string {
+    switch (difficulty) {
+      case 'easy': return '简单';
+      case 'medium': return '中等';
+      case 'hard': return '困难';
+      default: return difficulty;
+    }
   }
 
   private createStatsSection(): HTMLElement {
@@ -121,6 +216,10 @@ export class FungiGame {
     else if (stepsRatio <= 1.5) stepsClass = 'warning';
     else stepsClass = 'danger';
 
+    const levelDisplay = this.gameState!.puzzleName
+      ? this.gameState!.puzzleName
+      : `第 ${this.gameState!.level} 关`;
+
     grid.innerHTML = `
       <div class="stat-card">
         <div class="stat-label">当前步数</div>
@@ -135,8 +234,8 @@ export class FungiGame {
         <div class="stat-value">${this.gameState!.connectedNutrients.length}/${this.gameState!.nutrients.length}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">关卡</div>
-        <div class="stat-value info">${this.gameState!.level}</div>
+        <div class="stat-label">${this.gameState!.puzzleName ? '谜题' : '关卡'}</div>
+        <div class="stat-value info" style="font-size: 14px;">${levelDisplay}</div>
       </div>
     `;
 
@@ -182,7 +281,13 @@ export class FungiGame {
     const newGameBtn = document.createElement('button');
     newGameBtn.className = 'btn btn-primary';
     newGameBtn.innerHTML = '🎮 新游戏';
-    newGameBtn.onclick = () => this.startNewGame(this.selectedLevel);
+    newGameBtn.onclick = () => {
+      if (this.gameMode === 'puzzle' && this.selectedPuzzleId) {
+        this.startPuzzleGame(this.selectedPuzzleId);
+      } else {
+        this.startNewGame(this.selectedLevel);
+      }
+    };
     controls.appendChild(newGameBtn);
 
     section.appendChild(controls);
@@ -242,6 +347,10 @@ export class FungiGame {
       starText = '⭐⭐☆';
     }
 
+    const hasNext = this.gameMode === 'level'
+      ? this.selectedLevel < 5
+      : (this.selectedPuzzleId !== null && this.puzzles.findIndex((p) => p.id === this.selectedPuzzleId) < this.puzzles.length - 1);
+
     modal.innerHTML = `
       <div class="win-modal-content">
         <div class="win-title">🎉 连接成功！</div>
@@ -260,7 +369,7 @@ export class FungiGame {
           ${stars === 3 ? '完美！你找到了最优解！' : stars === 2 ? '表现不错，还能更优！' : '再接再厉，寻找更短的路径！'}
         </div>
         <div style="display: flex; gap: 10px; flex-direction: column;">
-          ${this.selectedLevel < 5 ? `<button class="btn btn-primary" id="next-level-btn">🚀 下一关</button>` : ''}
+          ${hasNext ? `<button class="btn btn-primary" id="next-level-btn">🚀 下一关</button>` : ''}
           <button class="btn btn-secondary" id="replay-btn">🔄 再玩一次</button>
         </div>
       </div>
@@ -271,16 +380,29 @@ export class FungiGame {
     const nextBtn = modal.querySelector('#next-level-btn');
     if (nextBtn) {
       nextBtn.addEventListener('click', () => {
-      document.body.removeChild(modal);
-      this.selectedLevel = Math.min(5, this.selectedLevel + 1);
-      this.startNewGame(this.selectedLevel);
-    });
+        document.body.removeChild(modal);
+        if (this.gameMode === 'level') {
+          this.selectedLevel = Math.min(5, this.selectedLevel + 1);
+          this.startNewGame(this.selectedLevel);
+        } else if (this.selectedPuzzleId) {
+          const currentIndex = this.puzzles.findIndex((p) => p.id === this.selectedPuzzleId);
+          if (currentIndex < this.puzzles.length - 1) {
+            const nextPuzzle = this.puzzles[currentIndex + 1];
+            this.selectedPuzzleId = nextPuzzle.id;
+            this.startPuzzleGame(nextPuzzle.id);
+          }
+        }
+      });
     }
 
     const replayBtn = modal.querySelector('#replay-btn')!;
     replayBtn.addEventListener('click', () => {
       document.body.removeChild(modal);
-      this.startNewGame(this.selectedLevel);
+      if (this.gameMode === 'level') {
+        this.startNewGame(this.selectedLevel);
+      } else if (this.selectedPuzzleId) {
+        this.startPuzzleGame(this.selectedPuzzleId);
+      }
     });
   }
 
@@ -295,6 +417,23 @@ export class FungiGame {
       this.renderPanel();
     } catch (e) {
       this.showMessage('创建游戏失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    } finally {
+      this.setProcessing(false);
+    }
+  }
+
+  private async startPuzzleGame(puzzleId: string): Promise<void> {
+    this.setProcessing(true);
+    this.showMessage('正在加载谜题...', 'info');
+
+    try {
+      this.gameState = await createPuzzleGame(puzzleId);
+      this.hexGrid.setGameState(this.gameState);
+      const puzzle = this.puzzles.find((p) => p.id === puzzleId);
+      this.showMessage(`谜题「${puzzle?.name || puzzleId}」开始！`, 'success');
+      this.renderPanel();
+    } catch (e) {
+      this.showMessage('创建谜题失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
     } finally {
       this.setProcessing(false);
     }

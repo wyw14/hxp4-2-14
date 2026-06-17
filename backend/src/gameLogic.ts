@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
-import { GameState, HexCell, HexCoord, HexType } from './types';
+import { GameState, HexCell, HexCoord, HexType, Puzzle } from './types';
 import { coordKey, generateHexGrid, hexDistance, getNeighbors, isInRadius, findPathAStar } from './hexUtils';
+import { getPuzzleById } from './puzzles';
 
 const LEVEL_CONFIGS: Record<number, { radius: number; nutrients: number; polluted: number }> = {
   1: { radius: 3, nutrients: 2, polluted: 3 },
@@ -224,6 +225,64 @@ export function undoLastMove(game: GameState): { game: GameState; success: boole
   }
 
   return { game: newGame, success: true, message: '已撤销上一步' };
+}
+
+export function createPuzzleGame(puzzleId: string): GameState {
+  const puzzle = getPuzzleById(puzzleId);
+  if (!puzzle) {
+    throw new Error('谜题不存在');
+  }
+
+  const allCoords = generateHexGrid(puzzle.gridRadius);
+  const cells: Record<string, HexCell> = {};
+  for (const coord of allCoords) {
+    cells[coordKey(coord)] = { coord, type: HexType.EMPTY };
+  }
+
+  const nutrients: string[] = [];
+
+  for (const pCell of puzzle.cells) {
+    const key = coordKey({ q: pCell.q, r: pCell.r });
+    if (!cells[key]) continue;
+
+    switch (pCell.type) {
+      case 'start':
+        cells[key].type = HexType.START;
+        break;
+      case 'nutrient':
+        cells[key].type = HexType.NUTRIENT;
+        cells[key].nutrientId = pCell.nutrientId;
+        if (pCell.nutrientId) {
+          nutrients.push(pCell.nutrientId);
+        }
+        break;
+      case 'polluted':
+        cells[key].type = HexType.POLLUTED;
+        break;
+    }
+  }
+
+  const myceliumCells: HexCoord[] = [puzzle.startCoord];
+  const optimalSteps = calculateOptimalSteps(cells, puzzle.startCoord, puzzle.gridRadius, nutrients);
+
+  return {
+    id: uuidv4(),
+    level: 0,
+    gridRadius: puzzle.gridRadius,
+    cells,
+    nutrients,
+    connectedNutrients: [],
+    startCoord: puzzle.startCoord,
+    myceliumCells,
+    steps: 0,
+    optimalSteps,
+    status: 'playing',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    puzzleId: puzzle.id,
+    puzzleName: puzzle.name,
+    puzzleDifficulty: puzzle.difficulty,
+  };
 }
 
 export function findAutoPath(

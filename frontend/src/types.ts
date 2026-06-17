@@ -17,6 +17,16 @@ export interface HexCell {
   nutrientId?: string;
 }
 
+export type PuzzleDifficulty = 'easy' | 'medium' | 'hard';
+
+export interface Puzzle {
+  id: string;
+  name: string;
+  difficulty: PuzzleDifficulty;
+  recommendedSteps: number;
+  gridRadius: number;
+}
+
 export interface GameState {
   id: string;
   level: number;
@@ -31,6 +41,9 @@ export interface GameState {
   status: 'playing' | 'won' | 'lost';
   createdAt: number;
   updatedAt: number;
+  puzzleId?: string;
+  puzzleName?: string;
+  puzzleDifficulty?: PuzzleDifficulty;
 }
 
 export interface ApiResponse<T = void> {

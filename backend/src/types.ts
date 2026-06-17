@@ -31,11 +31,34 @@ export interface GameState {
   status: 'playing' | 'won' | 'lost';
   createdAt: number;
   updatedAt: number;
+  puzzleId?: string;
+  puzzleName?: string;
+  puzzleDifficulty?: PuzzleDifficulty;
 }
 
 export interface CreateGameRequest {
   level?: number;
   gridRadius?: number;
+  puzzleId?: string;
+}
+
+export type PuzzleDifficulty = 'easy' | 'medium' | 'hard';
+
+export interface PuzzleCell {
+  q: number;
+  r: number;
+  type: 'start' | 'nutrient' | 'polluted';
+  nutrientId?: string;
+}
+
+export interface Puzzle {
+  id: string;
+  name: string;
+  difficulty: PuzzleDifficulty;
+  recommendedSteps: number;
+  gridRadius: number;
+  startCoord: HexCoord;
+  cells: PuzzleCell[];
 }
 
 export interface ExtendMyceliumRequest {
